@@ -1,0 +1,132 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and release (e.g. v1.0.0)'
+        required: true
+
+permissions:
+  contents: write
+  # Required for build provenance attestation.
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    name: Build and publish Windows release
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.29.x'
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Flutter doctor
+        run: flutter doctor -v
+
+      # A release must never ship code that fails the checks.
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Build release
+        run: flutter build windows --release
+
+      - name: Package
+        id: package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = "${{ github.event.inputs.tag }}"
+          if (-not $tag) { $tag = "${{ github.ref_name }}" }
+          $name = "HideAr-windows-x64"
+          New-Item -ItemType Directory -Force dist    | Out-Null
+          New-Item -ItemType Directory -Force staging | Out-Null
+
+          # Stage the app and its documentation together, so the docs end up
+          # INSIDE the archive. Someone about to run an unsigned binary should
+          # find SECURITY.md next to the exe, not have to go back to the repo
+          # for it.
+          Copy-Item build/windows/x64/runner/Release/* staging -Recurse -Force
+          Copy-Item README.md, LICENSE, SECURITY.md, PRIVACY.md staging -Force
+
+          Compress-Archive -Path staging/* -DestinationPath "dist/$name.zip"
+
+          if (-not (Test-Path "dist/$name.zip")) { throw "packaging produced no archive" }
+
+          $hash = (Get-FileHash "dist/$name.zip" -Algorithm SHA256).Hash
+          "$hash  $name.zip" | Out-File -FilePath dist/SHA256SUMS.txt -Encoding utf8
+
+          "tag=$tag"            | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "zip=dist/$name.zip"  | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Output "SHA256: $hash"
+
+      # Lets users cryptographically confirm the zip came from this workflow
+      # and this commit, which matters more than usual for an unsigned binary.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: ${{ steps.package.outputs.zip }}
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.package.outputs.tag }}
+          name: HideAr ${{ steps.package.outputs.tag }}
+          draft: false
+          generate_release_notes: true
+          files: |
+            dist/HideAr-windows-x64.zip
+            dist/SHA256SUMS.txt
+          body: |
+            ## Install
+
+            Download `HideAr-windows-x64.zip`, unzip anywhere, run `HideAr.exe`.
+            Windows 10 (1809+) or 11, x64, plus a webcam. No installer, no admin rights.
+
+            ## How camera frames are handled
+
+            Frames are captured straight into memory through HideAr's own
+            Media Foundation path, and nothing is written to disk. The status
+            console shows **FRAMES: In memory** when this path is live.
+
+            On machines where that will not start, HideAr falls back to the
+            Flutter camera plugin, which can only produce a frame by writing it
+            to disk. Those writes are redirected away from your OneDrive-synced
+            Pictures folder into private temp storage, and each file is
+            overwritten and deleted the instant it is read.
+            **[The complete account is in SECURITY.md](https://github.com/${{ github.repository }}/blob/main/SECURITY.md#how-camera-frames-are-handled)**.
+
+            ## Verify your download
+
+            This binary is **not code-signed**, so SmartScreen will warn you.
+            Verify it instead of clicking through:
+
+            ```powershell
+            Get-FileHash .\HideAr-windows-x64.zip -Algorithm SHA256
+            ```
+
+            Compare with `SHA256SUMS.txt` below, and check the provenance
+            attestation:
+
+            ```bash
+            gh attestation verify HideAr-windows-x64.zip --repo ${{ github.repository }}
+            ```
+
+            ## Changes
+
+            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md).

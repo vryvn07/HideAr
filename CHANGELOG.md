@@ -1,0 +1,183 @@
+# Changelog
+
+All notable changes to this project are documented here. Format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+
+- **Warns when the camera is blurring the background or auto-framing.**
+  Windows Studio Effects on Copilot+ PCs applies both inside the camera itself,
+  under its normal name, so the virtual-camera check could not see them. Either
+  one can remove a person standing behind you from the picture, and
+  shoulder-surfer detection would keep saying "Watching" while seeing nothing.
+  HideAr now asks the camera at start and every few seconds; when either
+  effect is on, the panel names it and marks shoulder-surfer detection as
+  limited. A camera that does not answer is shown as "Not reported", never as
+  off.
+
+## [1.0.1] — 2026-10-06
+
+### Added
+
+- **Start with Windows.** A tray utility that has to be launched by hand after
+  every reboot protects nobody on the mornings it is forgotten, and nothing says
+  it is not running. Opt-in, off by default. It registers under the per-user Run
+  key, launches straight into the tray and starts protecting. Because HideAr
+  is an unzip-anywhere folder, the entry is checked on every launch and rewritten
+  if the app has moved; otherwise a moved folder would leave autostart silently
+  broken.
+- **Camera preview toggle.** The status console showed a live image of the user
+  with no way to turn it off, which is a questionable default for a tool that
+  sits on screen all day. Detection is unaffected either way — the setting only
+  controls whether the video is drawn.
+- **Bug report form** asking for the details that have actually mattered in past
+  bugs: capture path, camera, any video effects, display scaling, and — asked
+  separately — whether the screen was left visible when it should have hidden.
+
+- **A proper icon.** The app, taskbar and tray all showed the default Flutter
+  logo. The new mark is a monitor whose screen has gone dark, with the camera
+  light lit, in the app's own palette. It is drawn per size on a pixel grid so
+  it stays sharp at 16 px in the tray, and checked against both light and dark
+  taskbars. Regenerate with `python tool/generate_icons.py`.
+
+### Changed
+
+- **Camera frames are read on a dedicated thread.** Each read waits for the
+  sensor's next frame, and doing that on the UI thread froze the window briefly
+  several times a second. Frames are just as fresh and there is no extra CPU
+  cost.
+
+### Fixed
+
+- **Camera names are readable, and the in-memory path opens the right
+  camera.** The Windows camera plugin names each device `Friendly Name <device
+  path>`, and the device path was being shown on screen as gibberish. Worse, the
+  in-memory capture path was handed that whole string and looked for a camera
+  whose friendly name contained it, which never matched, so it silently opened
+  whichever camera Windows listed first. On a machine where that is NVIDIA
+  Broadcast, the virtual-camera avoidance was bypassed. The name is now split:
+  the friendly part is shown, the virtual-camera check runs on the friendly part
+  only, and the camera is opened by its exact device path. If that device cannot
+  be found, the in-memory path refuses rather than opening a different one, and
+  the plugin fallback opens the chosen camera instead.
+- **The tray menu works.** Right-clicking the tray icon did nothing, because on
+  Windows the app has to open the menu itself and never did. So a HideAr
+  hidden in the tray could not be quit without Task Manager. Every exit path now
+  goes through one routine. It removes the tray icon rather than leaving a dead
+  one behind, then closes the window through an ordinary close request so
+  shutdown happens in order and exit is immediate.
+- **The panel no longer pops up after every look-away when minimised to the
+  tray.** When the blackout lifted, the window returned to panel size, centred
+  and always-on-top, regardless of where it had been. It now goes back to the
+  tray if that is where it was.
+
+## [1.0.0] — 2026-08-13
+
+First public release. Windows is the supported platform.
+
+### Added
+
+- **Head-pose estimation from facial keypoints.** Yaw and roll are recovered
+  analytically from BlazeFace's six keypoints via a cylindrical head model,
+  replacing a heuristic that only checked whether the face bounding box sat
+  near the middle of the frame.
+- **Per-user pitch calibration.** The neutral nose-below-eyes ratio is learned
+  from frames where the user faces the screen squarely, so detection adapts to
+  facial proportions instead of assuming a constant.
+- **Shoulder-surfer detection.** A second face in view protects the screen.
+  Toggleable; on by default.
+- **Staleness expiry.** If samples stop arriving, the screen re-protects within
+  seconds rather than holding the last known state indefinitely.
+- **Distinct protection reasons** surfaced in the UI — no face, looked away,
+  eyes closed, multiple faces, detector error, stale feed.
+- **Capture-file accounting** shown live in the status card, so the erasure
+  described in SECURITY.md is observable.
+- **Persisted settings** via `shared_preferences`.
+- Unit test suite covering the pose estimator and the detection state machine.
+- CI running `flutter analyze` and `flutter test`; tagged releases built by
+  GitHub Actions with SHA-256 checksums and build provenance attestation.
+
+### Changed
+
+- **The detector now fails closed.** Previously the screen started *visible*
+  and stayed visible until the first "away" reading — meaning it was unprotected
+  during startup and after any detector failure. It now starts protected and
+  requires positive evidence to reveal.
+- **Hysteresis is asymmetric again.** Hiding takes one frame at default
+  sensitivity; revealing takes several. A previous refactor had collapsed both
+  directions to the same frame count, removing the anti-flicker guarantee.
+- **Sensitivity now affects Windows.** The Windows path previously passed zeroed
+  rotation values into the detector, so the angular thresholds could never
+  trigger and the slider did nothing on that platform.
+- **Windows detection runs in `fast` mode.** The previous code used the
+  package's default `FaceDetectionMode.full`, which runs a 468-point face mesh
+  and two iris models per frame — none of whose output was used.
+- Sampling now slows while the screen is already protected, roughly halving
+  disk writes while the user is away.
+- The capture loop is self-scheduling rather than a fixed `Timer.periodic`, so
+  a slow frame cannot cause work to pile up behind it.
+
+### Fixed
+
+- **The blackout covers every display.** Previously it was a single fullscreen
+  window, so on a multi-monitor desk every other screen stayed perfectly
+  readable while the user was away. A single display still uses exclusive
+  fullscreen; several are covered by a window spanning the union of their
+  bounds, with a fallback to fullscreen if that union looks implausible.
+  Display geometry is unioned in physical pixels rather than in each monitor's
+  own logical pixels — mixing those spaces under-covered a mixed-DPI desk by
+  more than a thousand pixels, leaving a readable strip of screen exposed.
+- **Camera frames no longer touch the disk.** HideAr now captures through
+  its own Media Foundation path (`windows/runner/mf_camera.cpp`), reading frames
+  into memory instead of relying on `takePicture()`, whose only way to produce a
+  frame is to encode a JPEG to disk first. The plugin path remains as a fallback
+  so protection is never lost on machines where in-memory capture will not
+  start, and the status console reports which is live.
+- **Virtual cameras no longer silently defeat shoulder-surfer detection.** The
+  camera was chosen as "the first front-facing device", which on a machine
+  running NVIDIA Broadcast or OBS could hand HideAr a stream whose
+  background — including anyone standing behind the user — was already blurred
+  or replaced. The feature reported "watching" and detected nothing. HideAr
+  now prefers physical hardware and warns plainly when only a virtual camera is
+  available. Windows Studio Effects remains undetectable from user space and is
+  documented rather than handled.
+- **Captured frames no longer land in the user's Pictures folder.** The
+  upstream `camera_windows` plugin writes every `takePicture()` frame to
+  `FOLDERID_Pictures`, which is Search-indexed, thumbnailed, and typically
+  OneDrive-synced — so a gaze detector sampling several times a second would
+  upload thousands of photographs of the user. HideAr now vendors a forked
+  plugin whose sole change is to redirect captures to a private
+  `%TEMP%\HideArFrames` directory. See
+  [`packages/camera_windows/FORK_NOTICE.md`](packages/camera_windows/FORK_NOTICE.md).
+- **Captured frames are now erased.** Each JPEG is overwritten with zeros and
+  deleted immediately, on every path including errors, with a sweep on shutdown
+  for anything that survived a crash. See
+  [SECURITY.md](SECURITY.md#how-camera-frames-are-handled) for what this does
+  and does not solve.
+- **Window transitions no longer race.** Overlapping async `window_manager`
+  calls could interleave and leave the window state disagreeing with the
+  detector state. Transitions are now serialised.
+- The blackout re-asserts always-on-top when it loses focus, so alt-tab no
+  longer reveals the screen it is meant to be covering.
+- The Android overlay is now closed when protection stops. Previously it
+  outlived the camera and could remain stuck on a black screen indefinitely.
+
+### Known issues
+
+- On the fallback capture path only, frames are briefly written to private temp
+  storage before being erased. The status console reports when this path is in
+  use. See [SECURITY.md](SECURITY.md#how-camera-frames-are-handled).
+- The taskbar can remain visible when the blackout spans several monitors,
+  since that mode does not use exclusive fullscreen.
+- Windows Studio Effects (background blur, automatic framing, eye contact) is
+  applied inside the OS camera pipeline and cannot be detected from user space.
+  It can defeat both shoulder-surfer and look-away detection. See
+  [SECURITY.md](SECURITY.md#camera-effects).
+- Android support is experimental and unsupported.
+
+[Unreleased]: https://github.com/vryvn07/HideAr/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/vryvn07/HideAr/compare/v1.0.0...v1.0.1
+[1.0.0]: https://github.com/vryvn07/HideAr/releases/tag/v1.0.0

@@ -1,0 +1,812 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HideAr — your screen goes dark when you look away</title>
+<meta name="description" content="Open-source privacy screen protector for Windows. Real head-pose detection from your webcam, shoulder-surfer protection, and it fails closed.">
+<link rel="icon" type="image/png" href="icon.png">
+<meta property="og:title" content="HideAr">
+<meta property="og:description" content="Your screen goes dark when you look away. Open-source privacy screen protector for Windows.">
+<meta property="og:type" content="website">
+
+<style>
+/* ───────────────────────────────────────────────────────────────────────────
+   Built as a datasheet, not a product launch.
+
+   Deliberate constraints, each one chosen against the grain of the usual
+   dark-hero-with-gradient template:
+     · paper, not near-black — so the one black object on the page (the demo
+       screen) actually reads as a screen going dark
+     · square corners, no gradients, no glow, no backdrop blur
+     · monospace carries the page; the grotesk appears only at display size
+     · left-aligned and asymmetric — nothing is centered
+     · exactly one accent colour, used only for signal
+   ─────────────────────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: light;
+  --paper:  #e9e5dd;
+  --paper2: #e3ded4;
+  --card:   #f2efe9;
+  --ink:    #16161a;
+  --ink2:   #3d3b38;
+  --mute:   #6f6b63;
+  --rule:   #c6c0b4;
+  --rule2:  #d5cfc4;
+  --signal: #b3350f;
+  --black:  #0a0a0b;
+
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono",
+          "Roboto Mono", Menlo, Consolas, monospace;
+  --sans: "Helvetica Neue", Inter, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", system-ui, Arial, sans-serif;
+
+  /* One spacing scale. Everything vertical picks from these rather than
+     inventing a number, which is how the page ended up with 22/24/26/30/34/38
+     all meaning roughly "a gap". */
+  --s2: 8px;
+  --s3: 16px;
+  --s4: 24px;
+  --s5: 32px;
+  --s6: 48px;
+  --s7: 64px;
+
+  /* Shared row rhythm for every marker + label + prose list. */
+  --row-marker: 28px;
+  --row-label: 240px;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 1140px; margin: 0 auto; padding: 0 28px; }
+@media (max-width: 640px) { .wrap { padding: 0 18px; } }
+
+a { color: var(--ink); text-decoration-color: var(--rule); text-underline-offset: 3px; }
+a:hover { color: var(--signal); text-decoration-color: var(--signal); }
+
+hr { border: 0; border-top: 1px solid var(--rule); margin: 0; }
+.hr-heavy { border-top: 2px solid var(--ink); }
+
+/* ── Masthead ────────────────────────────────────────────────────────── */
+.masthead { padding-top: var(--s3); }
+.topline {
+  display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap;
+  font-size: 12px; letter-spacing: .06em; text-transform: uppercase;
+  padding-bottom: 10px;
+}
+.topline .id { font-weight: 700; letter-spacing: .14em; }
+.topline .spacer { margin-left: auto; }
+.topline a { text-decoration: none; color: var(--mute); }
+.topline a:hover { color: var(--signal); }
+
+.title {
+  font-family: var(--sans);
+  font-weight: 800;
+  font-size: clamp(2.3rem, 6.6vw, 4.7rem);
+  line-height: .94;
+  letter-spacing: -.045em;
+  margin: var(--s4) 0 0;
+  max-width: 17ch;
+}
+.title em { font-style: normal; color: var(--mute); }
+
+/* Kept tight on purpose: every pixel here pushes the demo below the fold, and
+   the demo is the argument. */
+.deck { margin: var(--s3) 0 0; max-width: 62ch; font-size: 15px; color: var(--ink2); }
+
+/* Spec sheet — the datasheet device that sets the whole tone. */
+.specs {
+  margin: var(--s5) 0 0;
+  border-top: 1px solid var(--rule);
+  font-size: 12.5px;
+}
+.specs dl { display: grid; grid-template-columns: 132px 1fr; margin: 0; }
+.specs dt {
+  padding: 9px 0; color: var(--mute);
+  letter-spacing: .08em; text-transform: uppercase;
+  border-bottom: 1px solid var(--rule2);
+}
+.specs dd {
+  padding: 9px 0; margin: 0; border-bottom: 1px solid var(--rule2);
+}
+.specs dd b { font-weight: 700; }
+@media (max-width: 560px) { .specs dl { grid-template-columns: 106px 1fr; } }
+
+.actions { display: flex; flex-wrap: wrap; gap: var(--s2); margin: var(--s5) 0 0; }
+.btn {
+  font-family: var(--mono); font-size: 13px; letter-spacing: .04em;
+  text-transform: uppercase; text-decoration: none;
+  padding: 12px 20px; border: 1px solid var(--ink); color: var(--ink);
+  background: transparent; cursor: pointer;
+  transition: background .12s linear, color .12s linear;
+}
+.btn:hover { background: var(--ink); color: var(--paper); }
+.btn-solid { background: var(--ink); color: var(--paper); }
+.btn-solid:hover { background: var(--signal); border-color: var(--signal); color: #fff; }
+
+.demo-sec { padding-top: var(--s6); }
+
+/* ── Section scaffolding ─────────────────────────────────────────────── */
+section { padding: var(--s7) 0; }
+/* Section marker: a large marginal figure over a small label. Replaces a "§",
+   which signalled "technical document" only to readers who already knew the
+   glyph and read as noise to everyone else. This also gives the narrow rail
+   something to hold — it was nearly empty before. */
+.sec-num { margin: 0 0 var(--s3); display: flex; align-items: baseline; gap: 12px; }
+.sec-num .fig {
+  font-family: var(--sans); font-weight: 800;
+  font-size: 2rem; line-height: .9; letter-spacing: -.05em;
+  color: var(--signal);
+}
+.sec-num .lbl {
+  font-size: 12px; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--mute);
+}
+@media (min-width: 900px) {
+  /* 6px is an optical nudge, not a scale value: it sits the numeral's
+     cap-height against the rule, which metric spacing alone does not do. */
+  .sec-num { display: block; padding-top: 6px; border-top: 2px solid var(--ink); }
+  .sec-num .fig { display: block; font-size: 3.1rem; margin-bottom: 4px; }
+}
+.sec-title {
+  font-family: var(--sans); font-weight: 800;
+  font-size: clamp(1.5rem, 3.6vw, 2.3rem); letter-spacing: -.035em;
+  line-height: 1.04; margin: 0; max-width: 22ch;
+}
+.sec-intro { margin: var(--s3) 0 0; max-width: 66ch; color: var(--ink2); }
+
+/* Two-column: narrow label rail + content. Asymmetry on purpose. */
+.cols { display: grid; gap: var(--s5); padding-top: var(--s5); }
+@media (min-width: 900px) {
+  .cols { grid-template-columns: var(--row-label) 1fr; gap: var(--s6); }
+}
+
+/* ── Shared list rhythm ──────────────────────────────────────────────────
+   Situations, capabilities and limitations are all "marker · label · prose"
+   rows stacked down the same column. They previously used 26/200, 42/260 and
+   28/240, so their labels started at three different x positions and the eye
+   caught the jitter on every scroll. One rhythm for all three. */
+.cases, .nots { list-style: none; padding: 0; }
+.cases, .nots, .blocks {
+  margin: var(--s5) 0 0;
+  border-top: 1px solid var(--rule);
+}
+.cases li, .nots li, .block {
+  display: grid;
+  gap: 4px var(--s3);
+  padding: var(--s4) 0;
+  border-bottom: 1px solid var(--rule2);
+}
+@media (min-width: 760px) {
+  .cases li, .nots li, .block {
+    grid-template-columns: var(--row-marker) var(--row-label) 1fr;
+    align-items: baseline;
+  }
+}
+/* Marker, label and prose share one treatment across all three lists. */
+.cases .a, .nots .x, .block .n { color: var(--signal); }
+.cases b, .nots b, .block h3 {
+  font-family: var(--sans); font-weight: 800;
+  letter-spacing: -.015em; font-size: .98rem; margin: 0;
+}
+.cases span.t, .nots span.t, .block p { color: var(--ink2); margin: 0; }
+
+/* Grid and flex items default to a min-width of `auto`, which lets any
+   non-wrapping child (the ASCII diagram, the formulas, a long command) widen
+   its own track and push the whole document into horizontal scroll. Pinning
+   it to 0 makes those children scroll inside their own box instead — which is
+   what their overflow-x:auto was for. */
+.cols > *, .block > *, .nots > li > *, .screen, .notice > * { min-width: 0; }
+
+/* ── The screen ──────────────────────────────────────────────────────── */
+.screen {
+  position: relative; background: var(--black); color: #d8d5cf;
+  border: 1px solid var(--ink); overflow: hidden;
+}
+.screen-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 13px; border-bottom: 1px solid #232326;
+  font-size: 11.5px; color: #6d6a64; letter-spacing: .06em;
+}
+.screen-bar .rec { margin-left: auto; display: flex; align-items: center; gap: 7px; }
+.screen-bar .rec i {
+  width: 6px; height: 6px; background: var(--signal); border-radius: 50%;
+  animation: blink 1.9s steps(1) infinite;
+}
+@keyframes blink { 0%, 60% { opacity: 1; } 61%, 100% { opacity: .15; } }
+
+.screen-body { position: relative; min-height: 244px; }
+.editor { padding: 18px 20px; font-size: 12.5px; line-height: 2.02; overflow-x: auto; }
+.editor .ln { color: #3a3a3e; display: inline-block; width: 24px; user-select: none; }
+.editor .k { color: #8fb4d9; }
+.editor .s { color: #c9a227; }
+.editor .c { color: #55534e; }
+@media (max-width: 620px) { .editor { font-size: 11px; } }
+
+.blackout {
+  position: absolute; inset: 0; background: var(--black);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  opacity: 0; visibility: hidden; transition: opacity .18s linear, visibility .18s;
+}
+.screen[data-state="protected"] .blackout { opacity: 1; visibility: visible; }
+.blackout .mark { width: 34px; height: 34px; border: 2px solid #d8d5cf; }
+.blackout .hd {
+  font-family: var(--sans); font-weight: 800; letter-spacing: -.02em;
+  font-size: 1.3rem; color: #f0ede7; margin: 6px 0 0;
+}
+.blackout .why { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--signal); }
+
+.readout {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 10px 13px; border-top: 1px solid #232326;
+  background: var(--black); color: #6d6a64; font-size: 11.5px; letter-spacing: .06em;
+}
+.readout .st { text-transform: uppercase; font-weight: 700; color: #d8d5cf; }
+.readout.protected .st { color: var(--signal); }
+.readout .bars { display: flex; gap: 3px; margin-left: auto; }
+.readout .bars i { width: 15px; height: 8px; background: #232326; display: block; }
+.readout .bars i.on { background: #d8d5cf; }
+.readout.protected .bars i.on { background: var(--signal); }
+
+.trigs { display: flex; flex-wrap: wrap; gap: 0; margin-top: -1px; }
+.trig {
+  font-family: var(--mono); font-size: 12px; letter-spacing: .05em;
+  text-transform: uppercase; padding: 10px 16px; cursor: pointer;
+  border: 1px solid var(--ink); margin-right: -1px;
+  background: var(--card); color: var(--ink2);
+}
+.trig:hover { background: var(--ink); color: var(--paper); }
+.caption { margin: var(--s3) 0 0; font-size: 12.5px; color: var(--mute); max-width: 70ch; }
+/* Screenshots: flex-grow matches each image's pixel width, so both scale by
+   the same factor and their text renders at the same size side by side. */
+.shots { display: flex; gap: var(--s3); align-items: flex-start; margin-top: var(--s6); max-width: 760px; }
+.shots img { display: block; width: 100%; height: auto; min-width: 0; }
+.shots .s-home { flex: 747 1 0; }
+.shots .s-prot { flex: 648 1 0; }
+.caption b { color: var(--ink); font-weight: 700; }
+
+/* ── Numbered list blocks ────────────────────────────────────────────── */
+.block .n { font-size: 12px; letter-spacing: .1em; }
+.block .eq {
+  display: inline-block; margin-top: var(--s3); padding: 6px 10px;
+  background: var(--card); border: 1px solid var(--rule2);
+  color: var(--signal); font-size: 12.5px; white-space: nowrap;
+  max-width: 100%; overflow-x: auto;
+}
+
+/* ── ASCII pipeline ──────────────────────────────────────────────────── */
+.ascii {
+  margin: 0; padding: 22px; background: var(--card);
+  border: 1px solid var(--rule2); overflow-x: auto;
+  font-size: 12.5px; line-height: 1.62; color: var(--ink2);
+}
+.ascii b { color: var(--ink); font-weight: 700; }
+.ascii .hi { color: var(--signal); }
+
+/* ── Notice ──────────────────────────────────────────────────────────── */
+.notice {
+  border: 2px solid var(--ink); background: var(--card);
+  padding: var(--s5); margin-top: var(--s5);
+}
+.notice h3 { font-family: var(--sans); font-size: 1.12rem; font-weight: 800; letter-spacing: -.02em; margin: 0 0 12px; }
+.notice p { color: var(--ink2); margin: 0 0 12px; }
+.notice p:last-child { margin-bottom: 0; }
+.notice kbd {
+  font-family: var(--mono); background: var(--paper2);
+  border: 1px solid var(--rule); padding: 1px 5px; font-size: .92em; color: var(--signal);
+}
+
+/* Commands in the verify section. */
+.cmds { margin-top: var(--s5); }
+pre.cmd {
+  margin: 0 0 var(--s2); padding: 13px 15px; background: var(--black); color: #d8d5cf;
+  overflow-x: auto; font-size: 12.5px; line-height: 1.55;
+}
+pre.cmd .p { color: #6d6a64; user-select: none; }
+
+/* ── Footer ──────────────────────────────────────────────────────────── */
+footer { padding: 30px 0 54px; font-size: 12px; color: var(--mute); }
+footer .row { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline; }
+footer a { text-decoration: none; color: var(--mute); letter-spacing: .06em; text-transform: uppercase; }
+footer a:hover { color: var(--signal); }
+footer .spacer { margin-left: auto; }
+</style>
+</head>
+<body>
+
+<div class="wrap masthead" id="top">
+  <div class="topline">
+    <span class="id">HideAr</span>
+    <span class="spacer"></span>
+    <a href="#what">01 In practice</a>
+    <a href="#how">02 Detection</a>
+    <a href="#frames">03 Frames</a>
+    <a href="#scope">04 Scope</a>
+    <a href="https://github.com/vryvn07/HideAr">Source</a>
+  </div>
+  <hr class="hr-heavy">
+
+  <h1 class="title">Your screen goes dark <em>when you look away.</em></h1>
+
+  <p class="deck">
+    Most people reading your screen aren't snooping. They're just sitting behind
+    you, and screens are extremely readable. HideAr doesn't ask anyone to be
+    polite — it removes the opportunity.
+  </p>
+  <p class="deck">
+    It reads your head position through the webcam, and blacks the screen out
+    the moment you stop looking at it — or the moment a second face appears
+    behind you.
+  </p>
+
+  <div class="actions">
+    <a class="btn btn-solid" href="https://github.com/vryvn07/HideAr/releases/latest">Download for Windows</a>
+    <a class="btn" href="https://github.com/vryvn07/HideAr">Read the source</a>
+  </div>
+</div>
+
+<!-- ── Live demo ───────────────────────────────────────────────────────── -->
+<section class="wrap demo-sec">
+  <div class="screen" id="screen" data-state="protected">
+    <div class="screen-bar">
+      <span>.env — production</span>
+      <span class="rec"><i></i> CAMERA ACTIVE</span>
+    </div>
+    <div class="screen-body">
+      <!-- Fictional, and deliberately not shaped like any real provider's
+           credential format: a page about not leaking things on screen should
+           not ship strings that trip secret scanners. -->
+      <div class="editor" aria-hidden="true">
+<span class="ln">1</span><span class="c"># do not commit this file</span><br>
+<span class="ln">2</span><span class="k">DATABASE_URL</span>=<span class="s">postgres://admin:correct-horse@db.internal/prod</span><br>
+<span class="ln">3</span><span class="k">PAYMENTS_API_TOKEN</span>=<span class="s">example-token-not-a-real-value</span><br>
+<span class="ln">4</span><span class="k">STORAGE_ACCESS_KEY</span>=<span class="s">example-key-do-not-use-anywhere</span><br>
+<span class="ln">5</span><span class="k">SESSION_SIGNING_SECRET</span>=<span class="s">example-secret-placeholder-only</span><br>
+<span class="ln">6</span><br>
+<span class="ln">7</span><span class="c"># compensation review — Q3, confidential</span><br>
+<span class="ln">8</span><span class="k">FINANCE_EXPORT_URL</span>=<span class="s">https://internal/payroll/q3.csv</span><br>
+      </div>
+
+      <div class="blackout">
+        <span class="mark"></span>
+        <p class="hd">Screen protected</p>
+        <p class="why" id="why">Waiting for camera</p>
+      </div>
+    </div>
+
+    <div class="readout protected" id="rail">
+      <span class="st" id="stateText">Protected</span>
+      <span id="frameText">0/3 frames</span>
+      <span class="bars" id="bars"><i></i><i></i><i></i></span>
+    </div>
+  </div>
+
+  <div class="trigs">
+    <button class="trig" data-r="lookedAway">Look away</button>
+    <button class="trig" data-r="noFace">Leave desk</button>
+    <button class="trig" data-r="multipleFaces">Someone behind you</button>
+  </div>
+
+  <p class="caption">
+    Not a video, and not a mockup — this runs the same state machine as the app.
+    <b>One disqualifying frame hides; three consecutive good ones reveal.</b>
+    Switch tabs or move your cursor off the page and it will protect itself.
+  </p>
+
+  <div class="shots">
+    <img class="s-home" src="screenshots/home.png" width="747" height="1397" loading="lazy"
+         alt="HideAr home panel: camera, sensitivity and shoulder-surfer settings, ready to start protection">
+    <img class="s-prot" src="screenshots/protecting.png" width="648" height="986" loading="lazy"
+         alt="HideAr while protecting: screen visible, head yaw and roll, frames held in memory">
+  </div>
+  <p class="caption">The app itself. Left, ready to start; right, protecting, with frames held in memory and nothing written to disk.</p>
+
+  <!-- Datasheet block sits below the demo: the screen is the hook, the spec
+       table is the detail you read once the hook has landed. Keeping it here
+       also keeps the masthead short enough that the demo is above the fold. -->
+  <div class="specs">
+    <dl>
+      <dt>Platform</dt>   <dd>Windows 10 (1809+) &amp; 11 · x64</dd>
+      <dt>Detection</dt>  <dd>BlazeFace via TFLite — <b>on device</b></dd>
+      <dt>Network</dt>    <dd><b>None.</b> No telemetry, no update check, no account</dd>
+      <dt>Install</dt>    <dd>Unzip and run · no installer · no admin rights</dd>
+      <dt>Licence</dt>    <dd>MIT · built with Flutter</dd>
+      <dt>Signing</dt>    <dd>Unsigned — SmartScreen will warn. Verify the checksum</dd>
+    </dl>
+  </div>
+</section>
+
+<!-- ── 01 In practice ──────────────────────────────────────────────────── -->
+<section class="wrap" id="what">
+  <hr>
+  <div class="cols">
+    <div>
+      <p class="sec-num"><span class="fig">01</span><span class="lbl">In practice</span></p>
+    </div>
+    <div>
+      <h2 class="sec-title">For anyone who has ever angled their laptop away from someone.</h2>
+      <p class="sec-intro">
+        You know the moment. You tilt the screen a few degrees, or you casually
+        alt-tab to nothing in particular, and then you feel faintly ridiculous
+        for doing it. This is the fix for that reflex.
+      </p>
+
+      <ul class="cases">
+        <li>
+          <span class="a">→</span>
+          <b>Trains and planes</b>
+          <span class="t">A tray table is not a private office, and the person opposite has an excellent viewing angle.</span>
+        </li>
+        <li>
+          <span class="a">→</span>
+          <b>Open-plan offices</b>
+          <span class="t">Where "have you got a quick second?" arrives from behind you, mid-sentence, at walking pace.</span>
+        </li>
+        <li>
+          <span class="a">→</span>
+          <b>Cafés and libraries</b>
+          <span class="t">The best power socket is never the seat with its back to a wall.</span>
+        </li>
+        <li>
+          <span class="a">→</span>
+          <b>Getting up for coffee</b>
+          <span class="t">The most common way a screen gets read is nobody being at it. Walk away and it goes dark on its own.</span>
+        </li>
+      </ul>
+
+      <div class="blocks">
+        <div class="block">
+          <span class="n">→</span>
+          <h3>A second face is one too many</h3>
+          <div><p>
+            Shoulder-surfer detection protects the screen when someone else
+            appears in frame — even while you are still looking at it yourself.
+            On by default, and switchable off if you share a desk.
+          </p></div>
+        </div>
+        <div class="block">
+          <span class="n">→</span>
+          <h3>Adjustable patience</h3>
+          <div><p>
+            Five sensitivity steps, from "I fidget constantly" to "what is on
+            this screen must not leave this room". It changes both the angle it
+            tolerates and how eagerly it hides.
+          </p></div>
+        </div>
+        <div class="block">
+          <span class="n">→</span>
+          <h3>It learns your face, never your identity</h3>
+          <div><p>
+            Calibration works out your neutral head position so detection fits
+            your proportions rather than an average. It has no idea who you are,
+            and stores nothing that could work it out.
+          </p></div>
+        </div>
+        <div class="block">
+          <span class="n">→</span>
+          <h3>It shows its working</h3>
+          <div><p>
+            The status panel keeps a live count of capture files erased. A
+            privacy tool asking for your webcam should be able to prove what it
+            did with the frames, rather than asking nicely to be believed.
+          </p></div>
+        </div>
+        <div class="block">
+          <span class="n">→</span>
+          <h3>Quietly resident</h3>
+          <div><p>
+            Minimises to the system tray and keeps working. There is also an
+            in-app mode that blurs only its own window, if you would rather not
+            grant anything system-wide.
+          </p></div>
+        </div>
+        <div class="block">
+          <span class="n">→</span>
+          <h3>Breaks safely</h3>
+          <div><p>
+            Camera unplugged, detector wedged, frames stopped arriving — every
+            one of those hides the screen. It will never leave your work on
+            display because something failed quietly in the background.
+          </p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── 02 Detection ────────────────────────────────────────────────────── -->
+<section class="wrap" id="how">
+  <hr>
+  <div class="cols">
+    <div>
+      <p class="sec-num"><span class="fig">02</span><span class="lbl">Detection</span></p>
+    </div>
+    <div>
+      <h2 class="sec-title">Geometry, not guesswork.</h2>
+      <p class="sec-intro">
+        The Windows face detector reports six facial keypoints and never a head
+        angle. Those six points are enough to recover the angles analytically,
+        which is what makes this more than proximity detection.
+      </p>
+
+      <pre class="ascii">
+ webcam ──▶ <b>Media Foundation</b> ──▶ <b>BMP in memory</b>   <span class="hi">◀── no file is ever</span>
+                  │                                <span class="hi">    created</span>
+                  ▼
+             <b>BlazeFace</b> ──▶ 6 keypoints ──▶ <b>head pose</b>
+                                              yaw · roll · pitch
+                                                    │
+                                                    ▼
+                                              <b>hysteresis</b> ──▶ <b>■ / □</b>
+</pre>
+
+      <div class="blocks">
+        <div class="block">
+          <span class="n">01</span>
+          <h3>Yaw, from a cylinder</h3>
+          <div>
+            <p>
+              Model the head as a cylinder: nose at the front, ear points at
+              ±90°. The nose's normalised position <i>t</i> between the two ears
+              collapses to a tangent, so the angle falls straight out.
+            </p>
+            <span class="eq">yaw = atan((t − 0.5) × 2)</span>
+          </div>
+        </div>
+        <div class="block">
+          <span class="n">02</span>
+          <h3>Pitch, calibrated to you</h3>
+          <div>
+            <p>
+              How far your nose sits below your eye line is a fact about your
+              face, not about your attention — a fixed threshold misfires on real
+              people. HideAr learns your neutral value and measures drift.
+            </p>
+            <span class="eq">deviation = ratio − learned_neutral</span>
+          </div>
+        </div>
+        <div class="block">
+          <span class="n">03</span>
+          <h3>Weighted toward hiding</h3>
+          <div>
+            <p>
+              Hiding takes one bad frame. Revealing takes several consecutive
+              good ones. Flickering to "protected" is an annoyance; flickering to
+              "visible" is a privacy failure. They are not treated as equal.
+            </p>
+            <span class="eq">framesToProtect ≤ framesToReveal</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── 03 Frames ───────────────────────────────────────────────────────── -->
+<section class="wrap" id="frames">
+  <hr>
+  <div class="cols">
+    <div><p class="sec-num"><span class="fig">03</span><span class="lbl">Frames</span></p></div>
+    <div>
+      <h2 class="sec-title">Where your camera frames actually go.</h2>
+      <p class="sec-intro">
+        The part most tools would leave out of the marketing.
+      </p>
+
+      <div class="notice">
+        <h3>They never touch the disk. Here is how.</h3>
+        <p>
+          HideAr captures through its own Media Foundation path, reading each
+          frame straight into memory and handing it to the detector there. No file
+          is created at any point &mdash; nothing to sync, index, snapshot, back up
+          or recover.
+        </p>
+        <p>
+          That matters because the obvious way to do this on Windows is the wrong
+          one. The Flutter camera plugin has no streaming API: its only way to
+          produce a frame is to encode a JPEG to disk first, and by default that
+          lands in your <kbd>Pictures</kbd> folder &mdash; Search-indexed,
+          thumbnailed, and on most machines synced to OneDrive. A detector sampling
+          several times a second would upload thousands of photographs of you.
+        </p>
+        <p>
+          That plugin is kept only as a fallback, for machines where in-memory
+          capture will not start, because losing protection entirely would be
+          worse. There it writes to private temp storage instead of Pictures, and
+          each file is overwritten and deleted the instant it has been read. The
+          status console tells you which path is running.
+          <a href="https://github.com/vryvn07/HideAr/blob/main/SECURITY.md#how-camera-frames-are-handled">Full detail in SECURITY.md &rarr;</a>
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── 04 Scope ────────────────────────────────────────────────────────── -->
+<section class="wrap" id="scope">
+  <hr>
+  <div class="cols">
+    <div><p class="sec-num"><span class="fig">04</span><span class="lbl">Scope</span></p></div>
+    <div>
+      <h2 class="sec-title">What it is not.</h2>
+      <p class="sec-intro">A privacy tool that overstates itself is worse than none at all.</p>
+
+      <ul class="nots">
+        <li>
+          <span class="x">✗</span>
+          <b>Not a lock screen</b>
+          <span class="t">It authenticates nobody and will not stop someone using your keyboard. That is what <kbd>Win</kbd>+<kbd>L</kbd> is for.</span>
+        </li>
+        <li>
+          <span class="x">✗</span>
+          <b>Not hiding your taskbar on multi-monitor</b>
+          <span class="t">Every display is covered, mixed-DPI included, but the window spanning them does not suppress the taskbar the way single-display fullscreen does.</span>
+        </li>
+        <li>
+          <span class="x">✗</span>
+          <b>Not proof against camera effects</b>
+          <span class="t">Background blur erases anyone behind you before HideAr sees the frame. It prefers a physical camera and warns otherwise. Windows Studio Effects applies to the hardware itself and cannot be avoided, so HideAr asks the camera and warns when blur or automatic framing is on.</span>
+        </li>
+        <li>
+          <span class="x">&#10007;</span>
+          <b>Not face recognition</b>
+          <span class="t">It knows a face is present and roughly where it points — not whose it is. Shoulder-surfer detection triggers on any second face, including one on a poster.</span>
+        </li>
+        <li>
+          <span class="x">✗</span>
+          <b>Not signed</b>
+          <span class="t">Certificates cost more than this project has, so SmartScreen will warn you. Verify the checksum instead.</span>
+        </li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ── 05 Verify ───────────────────────────────────────────────────────── -->
+<section class="wrap">
+  <hr>
+  <div class="cols">
+    <div><p class="sec-num"><span class="fig">05</span><span class="lbl">Verify</span></p></div>
+    <div>
+      <h2 class="sec-title">Check what you downloaded.</h2>
+      <p class="sec-intro">
+        Every release is built by GitHub Actions from a tagged commit — never
+        uploaded from a developer's machine — and carries a provenance
+        attestation you can check against this repository.
+      </p>
+      <div class="cmds">
+        <pre class="cmd"><span class="p">PS&gt; </span>Get-FileHash .\HideAr-windows-x64.zip -Algorithm SHA256</pre>
+        <pre class="cmd"><span class="p">$ </span>gh attestation verify HideAr-windows-x64.zip --repo vryvn07/HideAr</pre>
+      </div>
+      <div class="actions">
+        <a class="btn btn-solid" href="https://github.com/vryvn07/HideAr/releases/latest">Download for Windows</a>
+        <a class="btn" href="https://github.com/vryvn07/HideAr">Star on GitHub</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr>
+<footer class="wrap">
+  <div class="row">
+    <a href="https://github.com/vryvn07/HideAr">GitHub</a>
+    <a href="https://github.com/vryvn07/HideAr/blob/main/SECURITY.md">Security</a>
+    <a href="https://github.com/vryvn07/HideAr/blob/main/PRIVACY.md">Privacy</a>
+    <a href="https://github.com/vryvn07/HideAr/issues">Issues</a>
+    <span class="spacer"></span>
+    <span>MIT — no warranty, no telemetry, no server.</span>
+  </div>
+</footer>
+
+<script>
+(function () {
+  'use strict';
+
+  // ── A faithful port of GazeDetectorService ────────────────────────────
+  // Same asymmetry as the real thing: one disqualifying frame protects,
+  // FRAMES_TO_REVEAL consecutive good ones reveal.
+  var FRAMES_TO_REVEAL = 3;
+  var TICK_MS = 190;
+
+  var screenEl  = document.getElementById('screen');
+  var rail      = document.getElementById('rail');
+  var stateText = document.getElementById('stateText');
+  var frameText = document.getElementById('frameText');
+  var whyEl     = document.getElementById('why');
+  var bars      = document.getElementById('bars').children;
+
+  var REASONS = {
+    lookedAway:    'Looking away',
+    noFace:        'No one detected',
+    multipleFaces: 'Someone else is looking',
+    unfocused:     'No one detected'
+  };
+
+  var attentive = 0;
+  var visible = false;          // fails closed, exactly like the app
+  var forced = null;
+  var forcedUntil = 0;
+  var present = true;           // leaving the window is the real "look away"
+  var onScreen = true;
+
+  // document.hasFocus() is deliberately NOT consulted. It reports false in
+  // enough legitimate situations (automation, embedded views, focus parked in
+  // browser chrome) that gating on it can strand a visitor in front of a
+  // permanently black rectangle, which teaches them nothing.
+  function attentiveNow() {
+    return present && onScreen && !document.hidden;
+  }
+
+  function render(reason) {
+    screenEl.setAttribute('data-state', visible ? 'visible' : 'protected');
+    rail.classList.toggle('protected', !visible);
+    stateText.textContent = visible ? 'Visible' : 'Protected';
+    if (!visible && reason) whyEl.textContent = REASONS[reason] || 'Protected';
+
+    var filled = visible ? FRAMES_TO_REVEAL : attentive;
+    frameText.textContent = filled + '/' + FRAMES_TO_REVEAL + ' frames';
+    for (var i = 0; i < bars.length; i++) {
+      bars[i].className = i < filled ? 'on' : '';
+    }
+  }
+
+  function tick() {
+    if (forced && Date.now() > forcedUntil) forced = null;
+
+    var reason = forced;
+    if (!reason && !attentiveNow()) reason = 'unfocused';
+
+    if (reason) {
+      attentive = 0;
+      visible = false;          // one bad frame is enough
+    } else {
+      attentive++;
+      if (attentive >= FRAMES_TO_REVEAL) visible = true;
+    }
+    render(reason);
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll('.trig'), function (btn) {
+    btn.addEventListener('click', function () {
+      forced = btn.getAttribute('data-r');
+      forcedUntil = Date.now() + 3200;   // long enough to actually read
+      tick();
+    });
+  });
+
+  document.addEventListener('mouseleave', function () { present = false; tick(); });
+  window.addEventListener('blur',  function () { present = false; tick(); });
+  document.addEventListener('visibilitychange', tick);
+
+  ['mouseenter', 'mousemove', 'scroll', 'touchstart', 'keydown'].forEach(function (evt) {
+    window.addEventListener(evt, function () { present = true; }, { passive: true });
+  });
+  window.addEventListener('focus', function () { present = true; });
+
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver(function (entries) {
+      onScreen = entries[0].isIntersecting;
+    }, { threshold: .2 }).observe(screenEl);
+  }
+
+  render(null);
+  setInterval(tick, TICK_MS);
+})();
+</script>
+
+</body>
+</html>
