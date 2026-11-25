@@ -589,8 +589,7 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
               child: BentoTile(
                 icon: Icons.rotate_right_rounded,
                 label: 'Roll',
-                value:
-                    pose == null ? '--' : '${pose.roll.toStringAsFixed(1)}°',
+                value: pose == null ? '--' : '${pose.roll.toStringAsFixed(1)}°',
               ),
             ),
             const SizedBox(width: S.x2),
@@ -668,8 +667,7 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
                     Text(
                       failures == 0
                           ? '${_cameraGazeService.framesShredded}'
-                          : '${_cameraGazeService.framesShredded} '
-                              '($failures failed)',
+                          : '${_cameraGazeService.framesShredded} ($failures failed)',
                       style: T.value.copyWith(
                         fontSize: 12.5,
                         color: failures == 0 ? C.espresso : C.caramel,

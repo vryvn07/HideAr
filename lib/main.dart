@@ -237,8 +237,7 @@ class _HideArHomeState extends State<HideArHome> with tray.TrayListener {
               _canOpenSettings = status.isPermanentlyDenied;
               _error =
                   status.isPermanentlyDenied
-                      ? 'Camera access was permanently denied. Enable it in '
-                          'Settings.'
+                      ? 'Camera access was permanently denied. Enable it in Settings.'
                       : 'Camera access is required to detect gaze.';
             });
           }
@@ -688,8 +687,7 @@ class _HideArHomeState extends State<HideArHome> with tray.TrayListener {
                       borderRadius: BorderRadius.circular(R.pill),
                     ),
                     child: Text(
-                      '${_sensitivityLabel(_sensitivity)} • '
-                      '${(_sensitivity * 100).round()}%',
+                      '${_sensitivityLabel(_sensitivity)} • ${(_sensitivity * 100).round()}%',
                       style: T.caption.copyWith(color: C.beige, fontSize: 11),
                     ),
                   ),

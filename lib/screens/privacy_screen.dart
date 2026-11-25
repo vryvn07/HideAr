@@ -309,9 +309,8 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
   Widget _buildCameraPreview() {
     final CameraController? controller = _cameraGazeService.controller;
     final Uint8List? nativeFrame = _cameraGazeService.lastFrameBytes;
-    final bool hasController =
-        controller != null && controller.value.isInitialized;
-    if (!hasController && nativeFrame == null) {
+    if ((controller == null || !controller.value.isInitialized) &&
+        nativeFrame == null) {
       return const SizedBox.shrink();
     }
     return GestureDetector(
@@ -326,7 +325,7 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(R.md - 2),
           child:
-              hasController
+              controller != null && controller.value.isInitialized
                   ? CameraPreview(controller)
                   : Image.memory(
                     nativeFrame!,
