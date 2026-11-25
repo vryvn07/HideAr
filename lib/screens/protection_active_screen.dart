@@ -489,8 +489,6 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
     final int shredded = _cameraGazeService.framesShredded;
     final String wipedLabel =
         failures == 0 ? '$shredded' : '$shredded ($failures failed)';
-    const EdgeInsets metricPadding =
-        EdgeInsets.symmetric(horizontal: S.x4, vertical: S.x3);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -645,7 +643,7 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
         ),
         const SizedBox(height: S.x2 + 2),
         SurfaceCard(
-          padding: metricPadding,
+          padding: const EdgeInsets.fromLTRB(S.x4, S.x3, S.x4, S.x3),
           child: Row(
             children: [
               Expanded(
