@@ -1,10 +1,9 @@
 // Protection screen: the camera runs while this route is mounted. On Windows
-// the window expands to a fullscreen blackout when the user looks away; on
+// the window expands to a fullscreen espresso veil when the user looks away; on
 // Android (experimental) it notifies the separate overlay process instead.
 
 import 'dart:async';
 import 'dart:io';
-
 import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
@@ -37,27 +36,11 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
   bool _isStarting = true;
   String? _error;
 
-  // Windows overlay state
   bool _overlayActive = false;
-
-  /// Whether the window was in the tray when the blackout took over, so it
-  /// can go back there afterwards instead of popping up mid-screen.
   bool _hiddenBeforeBlackout = false;
   Timer? _windowDebounce;
-
-  /// Serialises window_manager transitions. Without this, two overlapping
-  /// calls to [_applyWindowMode] can interleave their awaits and leave the
-  /// window fullscreen while the state says it is not — which would show the
-  /// blackout over a screen the user is actively looking at, or worse, leave
-  /// the screen exposed while the state believes it is covered.
   Future<void> _windowOp = Future<void>.value();
-
   bool _lastNotifiedVisible = false;
-
-  /// Re-evaluates state on a timer. [GazeDetectorService.isScreenVisible] can
-  /// flip to protected purely through the passage of time when samples stop
-  /// arriving, and that transition fires no callback, so nothing else would
-  /// notice a wedged capture loop.
   Timer? _watchdog;
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
@@ -79,14 +62,9 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
           _isStarting = false;
           _error = msg;
         });
-        // A camera failure can arrive while the blackout is already up — a
-        // yanked USB webcam, for instance. Stand the window back down so the
-        // error is readable and dismissable rather than fullscreen.
         if (Platform.isWindows) _applyWindowMode();
       },
     );
-    // Settings cannot change while this screen is up -- it covers the home
-    // screen that holds them -- so reading once here is enough.
     _cameraGazeService.keepPreviewFrame = settings.showCameraPreview;
     if (Platform.isWindows) {
       windowManager.addListener(this);
@@ -116,7 +94,6 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
     if (_gazeDetector.isScreenVisible != _lastNotifiedVisible) {
       _onGazeChanged();
     } else {
-      // Keep the confidence meter and reason text live.
       setState(() {});
     }
   }
@@ -138,19 +115,9 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
     } catch (_) {}
   }
 
-  /// Whether the fullscreen blackout should currently be covering the screen.
-  ///
-  /// Note the two guards beyond the detector state. The detector fails closed,
-  /// so `isScreenVisible` is false while starting up and after a camera error —
-  /// states where there is nothing to protect because the camera never opened.
-  /// Escalating those to a fullscreen, always-on-top, self-refocusing window
-  /// leaves the user with an error message they cannot alt-tab away from.
   bool get _blackoutWanted =>
       !_isStarting && _error == null && !_gazeDetector.isScreenVisible;
 
-  /// If the blackout loses focus while the screen is meant to be protected,
-  /// put it back on top. Otherwise alt-tab or a notification toast would
-  /// reveal exactly the content the blackout exists to hide.
   @override
   void onWindowBlur() {
     if (!Platform.isWindows || !mounted) return;
@@ -170,7 +137,6 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
     );
   }
 
-  /// Chains work onto [_windowOp] so window transitions never interleave.
   void _enqueueWindowOp(Future<void> Function() op) {
     _windowOp = _windowOp.then((_) async {
       if (!mounted) return;
@@ -182,23 +148,6 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
     });
   }
 
-  /// Expands the blackout across every display.
-  ///
-  /// `setFullScreen` only ever covers the monitor the window happens to be on,
-  /// so on a multi-monitor desk every other screen stayed perfectly readable
-  /// while the user was away. That is the hole this closes.
-  ///
-  /// The coordinate handling is the fiddly part. screen_retriever reports each
-  /// monitor already divided by *that monitor's own* scale factor, while
-  /// setBounds multiplies whatever it receives by *the window's* device pixel
-  /// ratio. Unioning the reported values directly mixes coordinate spaces, and
-  /// on a mixed-DPI desk that under-covers — by well over a thousand physical
-  /// pixels in the case covered by the tests, which is a whole readable strip
-  /// of monitor. computeCoverRect converts everything to physical pixels, unions
-  /// there, and converts once into the window's space.
-  ///
-  /// A single display keeps the setFullScreen path: it is exact, and unlike a
-  /// spanning window it also hides the taskbar.
   Future<void> _coverAllDisplays() async {
     List<Display> displays = const <Display>[];
     try {
@@ -226,9 +175,6 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
       windowScaleFactor: windowManager.getDevicePixelRatio(),
     );
 
-    // Never trust a nonsensical rectangle. A bad cover is worse than a
-    // single-monitor one, because it could leave the primary screen bare while
-    // the app believes it is protected.
     if (cover == null || cover.width < 200 || cover.height < 200) {
       debugPrint('HideAr: display union looked wrong, using fullscreen');
       await windowManager.setFullScreen(true);
@@ -258,9 +204,6 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
         await windowManager.setAlwaysOnTop(true);
         await windowManager.setSize(W.panel);
         await windowManager.center();
-        // Previously the panel stayed on screen, centred and always-on-top,
-        // after every look-away -- even for someone who had minimised it to
-        // the tray. Return it to wherever it was.
         if (_hiddenBeforeBlackout) {
           _hiddenBeforeBlackout = false;
           await windowManager.hide();
@@ -324,8 +267,6 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
       await _restoreWindowSize();
     }
     if (Platform.isAndroid) {
-      // Without this the overlay service outlives the camera and stays stuck on
-      // whatever state it saw last — potentially a permanent black screen.
       try {
         await FlutterOverlayWindow.closeOverlay();
       } catch (_) {}
@@ -340,35 +281,40 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
     final bool isVisible = _gazeDetector.isScreenVisible;
     final bool showBlackout = _blackoutWanted;
 
+    final String headerTitle =
+        _isStarting
+            ? 'Starting Shield'
+            : (_error != null ? 'Sensor Error' : 'Shield Active');
+    final String badgeText =
+        _isStarting
+            ? 'INIT'
+            : (_error != null ? 'FAULT' : (isVisible ? 'CLEAR' : 'VEILED'));
+    final Color dotColor =
+        _isStarting
+            ? C.cocoa
+            : (_error != null ? C.caramel : (isVisible ? C.olive : C.caramel));
+
     return Stack(
       fit: StackFit.expand,
       children: [
         Scaffold(
-          backgroundColor: C.paper,
+          backgroundColor: C.beige,
           body: Column(
             children: [
               if (Platform.isWindows)
-                TitleStrip(
-                  title:
-                      _isStarting
-                          ? 'Starting'
-                          : (_error != null
-                              ? 'Camera error'
-                              : 'Protection active'),
-                  statusColor:
-                      _isStarting
-                          ? C.inkMuted
-                          : (_error != null
-                              ? C.signal
-                              : (isVisible ? C.clear : C.signal)),
+                HideArHeader(
+                  title: headerTitle,
+                  badgeText: badgeText,
+                  badgeDotColor: dotColor,
                   onBack: _stopProtection,
                   onMinimise: () => windowManager.hide(),
                   onClose: exitHideAr,
+                  onDragStart: () => windowManager.startDragging(),
                 ),
               Expanded(
                 child: SafeArea(
                   child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(S.x5),
+                    padding: const EdgeInsets.all(S.x4),
                     child: _buildBody(isVisible),
                   ),
                 ),
@@ -388,22 +334,50 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
   }
 
   Widget _buildStarting() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('STATUS', style: T.label),
-        const SizedBox(height: S.x2),
-        const Text('Opening\ncamera', style: T.state),
-        const SizedBox(height: S.x5),
-        const SizedBox(
-          width: 120,
-          child: LinearProgressIndicator(
-            minHeight: 3,
-            color: C.ink,
-            backgroundColor: C.ruleFaint,
+    return SurfaceCard(
+      padding: const EdgeInsets.all(S.x5),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: C.espresso,
+                  borderRadius: BorderRadius.circular(R.md),
+                ),
+                child: const Icon(
+                  Icons.shield_outlined,
+                  color: C.beige,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: S.x3),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Waking Camera', style: T.heading),
+                    const SizedBox(height: 2),
+                    Text('Preparing on-device face geometry', style: T.body),
+                  ],
+                ),
+              ),
+            ],
           ),
-        ),
-      ],
+          const SizedBox(height: S.x5),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(R.pill),
+            child: const LinearProgressIndicator(
+              minHeight: 6,
+              color: C.espresso,
+              backgroundColor: C.sandDeep,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -411,37 +385,64 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('STATUS', style: T.label.copyWith(color: C.signal)),
-        const SizedBox(height: S.x2),
-        Text('Camera\nerror', style: T.state.copyWith(color: C.signal)),
-        const SizedBox(height: S.x5),
-        const Rule(),
+        SurfaceCard(
+          color: C.caramelSoft,
+          borderColor: C.caramel,
+          padding: const EdgeInsets.all(S.x5),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: C.caramel,
+                      borderRadius: BorderRadius.circular(R.md),
+                    ),
+                    child: const Icon(
+                      Icons.error_outline_rounded,
+                      color: C.beige,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: S.x3),
+                  Expanded(child: Text('Sensor Interrupted', style: T.heading)),
+                ],
+              ),
+              const SizedBox(height: S.x3),
+              Text(_error!, style: T.body),
+            ],
+          ),
+        ),
         const SizedBox(height: S.x4),
-        Text(_error!, style: T.body),
-        const SizedBox(height: S.x6),
-        PanelButton(label: 'Retry', primary: true, onPressed: _startCamera),
+        ActionPillButton(
+          label: 'Retry Sensor',
+          primary: true,
+          icon: Icons.refresh_rounded,
+          onPressed: _startCamera,
+        ),
         const SizedBox(height: S.x2),
-        PanelButton(label: 'Stop protection', onPressed: _stopProtection),
+        ActionPillButton(
+          label: 'Disable Shield',
+          tonal: true,
+          onPressed: _stopProtection,
+        ),
       ],
     );
   }
 
-  // -- The console ----------------------------------------------------------
+  // -- Live Dashboard -------------------------------------------------------
 
   Widget _buildStatus(bool isVisible) {
     final CameraController? controller = _cameraGazeService.controller;
-    // On the in-memory path there is no CameraController to preview from --
-    // not starting one is the point -- so the preview renders the same frames
-    // the detector is looking at.
     final Uint8List? nativeFrame = _cameraGazeService.lastFrameBytes;
-    // Read live rather than caching at initState, so toggling the setting takes
-    // effect without restarting protection.
     final bool wantPreview = SettingsService.instance.showCameraPreview;
     final bool hasPreview =
         wantPreview &&
         ((controller != null && controller.value.isInitialized) ||
             nativeFrame != null);
-    final Color tone = isVisible ? C.clear : C.signal;
     final HeadPose? pose = _cameraGazeService.lastPose;
     final int failures = _cameraGazeService.shredFailures;
     final CameraEffects effects = _cameraGazeService.effects;
@@ -449,138 +450,263 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
         _gazeDetector.detectShoulderSurfers &&
         (_cameraGazeService.isVirtualCamera || effects.hidesOthers);
 
+    final Color bannerBg = isVisible ? C.espresso : C.caramel;
+    final Color bannerBorder = isVisible ? C.roast : C.caramel;
+    final double progress = isVisible ? 1.0 : _gazeDetector.confidence;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('SCREEN', style: T.label),
-        const SizedBox(height: S.x2),
-        Text(
-          isVisible ? 'Visible' : 'Protected',
-          style: T.state.copyWith(color: tone),
-        ),
-        const SizedBox(height: S.x1),
-        Text(_gazeDetector.reason.message, style: T.body),
-
-        const SizedBox(height: S.x4),
-        SegmentMeter(
-          filled:
-              isVisible
-                  ? _gazeDetector.framesToReveal
-                  : (_gazeDetector.confidence * _gazeDetector.framesToReveal)
-                      .round(),
-          total: _gazeDetector.framesToReveal,
-          color: tone,
-        ),
-
-        if (hasPreview) ...[
-          const SizedBox(height: S.x5),
-          // Constrained rather than fixed: the preview keeps the camera's own
-          // aspect ratio and simply gets smaller in a narrow window, instead of
-          // forcing a 4:3 box wider than the panel.
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 150),
-            child:
-                controller != null && controller.value.isInitialized
-                    ? AspectRatio(
-                      aspectRatio:
-                          controller.value.aspectRatio == 0
-                              ? 4 / 3
-                              : controller.value.aspectRatio,
-                      child: CameraPreview(controller),
-                    )
-                    : Image.memory(
-                      nativeFrame!,
-                      gaplessPlayback: true,
-                      filterQuality: FilterQuality.low,
+        SurfaceCard(
+          color: bannerBg,
+          borderColor: bannerBorder,
+          padding: const EdgeInsets.all(S.x4),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: C.beige.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(R.md),
                     ),
+                    child: Icon(
+                      isVisible
+                          ? Icons.visibility_rounded
+                          : Icons.visibility_off_rounded,
+                      color: C.beige,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: S.x3),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          isVisible ? 'Display Clear' : 'Display Veiled',
+                          style: T.hero.copyWith(color: C.beige, fontSize: 21),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _gazeDetector.reason.message,
+                          style: T.body.copyWith(color: C.sandDeep),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: S.x4),
+              VeilProgressBar(progress: progress, color: C.beige),
+              const SizedBox(height: S.x2),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    isVisible
+                        ? 'Attentive lock active'
+                        : 'Frames to unlock: ${_gazeDetector.framesToReveal}',
+                    style: T.caption.copyWith(
+                      color: C.sandDeep,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  Text(
+                    '${(progress * 100).round()}%',
+                    style: T.caption.copyWith(color: C.beige),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        if (hasPreview) ...[
+          const SizedBox(height: S.x3),
+          SurfaceCard(
+            padding: const EdgeInsets.all(S.x2),
+            child: Stack(
+              children: [
+                Center(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(R.md),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 145),
+                      child:
+                          controller != null && controller.value.isInitialized
+                              ? AspectRatio(
+                                aspectRatio:
+                                    controller.value.aspectRatio == 0
+                                        ? 4 / 3
+                                        : controller.value.aspectRatio,
+                                child: CameraPreview(controller),
+                              )
+                              : Image.memory(
+                                nativeFrame!,
+                                gaplessPlayback: true,
+                                filterQuality: FilterQuality.low,
+                              ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: S.x2,
+                  left: S.x2,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: S.x2,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: C.espresso.withValues(alpha: 0.85),
+                      borderRadius: BorderRadius.circular(R.pill),
+                    ),
+                    child: Text(
+                      'LIVE SENSOR',
+                      style: T.caption.copyWith(color: C.beige, fontSize: 10),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
-
-        const SizedBox(height: S.x6),
-        const Rule(),
-        SpecRow(
-          label: 'Yaw',
-          value: pose == null ? '--' : '${pose.yaw.toStringAsFixed(1)} deg',
+        const SizedBox(height: S.x3),
+        Row(
+          children: [
+            Expanded(
+              child: BentoTile(
+                icon: Icons.swap_horiz_rounded,
+                label: 'Yaw',
+                value: pose == null ? '--' : '${pose.yaw.toStringAsFixed(1)}°',
+              ),
+            ),
+            const SizedBox(width: S.x2),
+            Expanded(
+              child: BentoTile(
+                icon: Icons.rotate_right_rounded,
+                label: 'Roll',
+                value:
+                    pose == null ? '--' : '${pose.roll.toStringAsFixed(1)}°',
+              ),
+            ),
+            const SizedBox(width: S.x2),
+            Expanded(
+              child: BentoTile(
+                icon: Icons.center_focus_strong_rounded,
+                label: 'Tune',
+                value: _cameraGazeService.isPitchCalibrated ? 'Ready' : 'Learn',
+              ),
+            ),
+          ],
         ),
-        const Rule(faint: true),
-        SpecRow(
-          label: 'Roll',
-          value: pose == null ? '--' : '${pose.roll.toStringAsFixed(1)} deg',
+        const SizedBox(height: S.x2 + 2),
+        Row(
+          children: [
+            Expanded(
+              child: BentoTile(
+                icon: Icons.memory_rounded,
+                label: 'Capture',
+                value:
+                    _cameraGazeService.isInMemoryCapture
+                        ? 'RAM ($_captureModeLabel)'
+                        : 'Disk ($_captureModeLabel)',
+                valueColor:
+                    _cameraGazeService.isInMemoryCapture
+                        ? C.olive
+                        : C.espresso,
+                toneColor:
+                    _cameraGazeService.isInMemoryCapture
+                        ? C.oliveSoft
+                        : C.sandDeep,
+              ),
+            ),
+            const SizedBox(width: S.x2 + 2),
+            Expanded(
+              child: BentoTile(
+                icon: Icons.group_outlined,
+                label: 'Bystander',
+                value: _shoulderLabel,
+                valueColor: shoulderLimited ? C.caramel : C.espresso,
+                toneColor: shoulderLimited ? C.caramelSoft : C.sandDeep,
+              ),
+            ),
+          ],
         ),
-        const Rule(faint: true),
-        SpecRow(
-          label: 'Calibration',
-          value: _cameraGazeService.isPitchCalibrated ? 'Learned' : 'Learning',
+        const SizedBox(height: S.x2 + 2),
+        SurfaceCard(
+          padding: const EdgeInsets.symmetric(horizontal: S.x4, vertical: S.x3),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Camera Effects', style: T.caption),
+                    const SizedBox(height: 2),
+                    Text(
+                      effects.summary,
+                      style: T.value.copyWith(
+                        fontSize: 12.5,
+                        color: effects.hidesOthers ? C.caramel : C.espresso,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(width: 1, height: 28, color: C.border),
+              const SizedBox(width: S.x3),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Temp Wiped', style: T.caption),
+                    const SizedBox(height: 2),
+                    Text(
+                      failures == 0
+                          ? '${_cameraGazeService.framesShredded}'
+                          : '${_cameraGazeService.framesShredded} '
+                              '($failures failed)',
+                      style: T.value.copyWith(
+                        fontSize: 12.5,
+                        color: failures == 0 ? C.espresso : C.caramel,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
-        const Rule(faint: true),
-        SpecRow(
-          label: 'Shoulder',
-          value: _shoulderLabel,
-          valueColor: shoulderLimited ? C.signal : C.ink,
-          emphasis: shoulderLimited,
-        ),
-        const Rule(faint: true),
-        SpecRow(
-          label: 'Effects',
-          value: effects.summary,
-          valueColor:
-              effects.hidesOthers
-                  ? C.signal
-                  : (effects.isReported ? C.ink : C.inkMuted),
-          emphasis: effects.hidesOthers,
-        ),
-        const Rule(faint: true),
-        SpecRow(
-          label: 'Frames',
-          value:
-              _cameraGazeService.isInMemoryCapture
-                  ? 'In memory'
-                  : 'Via disk (fallback)',
-          valueColor: _cameraGazeService.isInMemoryCapture ? C.clear : C.ink,
-          emphasis: _cameraGazeService.isInMemoryCapture,
-        ),
-        const Rule(faint: true),
-        SpecRow(label: 'Capture', value: _captureModeLabel),
-        const Rule(faint: true),
-        SpecRow(
-          label: 'Frames wiped',
-          value:
-              failures == 0
-                  ? '${_cameraGazeService.framesShredded}'
-                  : '${_cameraGazeService.framesShredded}  ($failures failed)',
-          valueColor: failures == 0 ? C.ink : C.signal,
-          emphasis: failures != 0,
-        ),
-        const Rule(),
-
-        const SizedBox(height: S.x6),
+        const SizedBox(height: S.x4),
         if (Platform.isWindows) ...[
-          PanelButton(
-            label: 'Minimise to tray',
-            icon: Icons.remove,
+          ActionPillButton(
+            label: 'Minimise to Tray',
+            tonal: true,
+            icon: Icons.horizontal_rule_rounded,
             onPressed: () => windowManager.hide(),
           ),
           const SizedBox(height: S.x2),
         ],
-        PanelButton(
-          label: 'Stop protection',
+        ActionPillButton(
+          label: 'Disable Shield',
           danger: true,
-          icon: Icons.stop_outlined,
+          icon: Icons.power_settings_new_rounded,
           onPressed: _stopProtection,
         ),
       ],
     );
   }
 
-  /// Shoulder-surfer status, owning up to anything that blinds it. A virtual
-  /// camera or an effect that blurs or crops out the background means a second
-  /// face may never reach the detector, and "Watching" would be a false claim.
   String get _shoulderLabel {
     if (!_gazeDetector.detectShoulderSurfers) return 'Off';
-    if (_cameraGazeService.isVirtualCamera) return 'Unreliable — effects cam';
+    if (_cameraGazeService.isVirtualCamera) return 'Limited (Virtual)';
     final CameraEffects effects = _cameraGazeService.effects;
-    if (effects.backgroundBlur == true) return 'Limited — blur on';
-    if (effects.autoFraming == true) return 'Limited — framing on';
+    if (effects.backgroundBlur == true) return 'Limited (Blur)';
+    if (effects.autoFraming == true) return 'Limited (Framing)';
     return 'Watching';
   }
 
@@ -600,11 +726,11 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
     };
   }
 
-  // -- Blackout -------------------------------------------------------------
+  // -- Fullscreen Espresso Veil ---------------------------------------------
 
   Widget _buildBlackout() {
     return ColoredBox(
-      color: C.black,
+      color: C.espressoDeep,
       child: Center(
         child: Padding(
           padding: const EdgeInsets.all(S.x6),
@@ -612,41 +738,50 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: 46,
-                height: 46,
+                width: 82,
+                height: 82,
                 decoration: BoxDecoration(
+                  color: C.espresso,
+                  shape: BoxShape.circle,
                   border: Border.all(
-                    color: C.paper.withValues(alpha: 0.8),
+                    color: C.sand.withValues(alpha: 0.35),
                     width: 2,
                   ),
                 ),
-                child: Icon(
-                  Icons.lock_outline,
-                  size: 22,
-                  color: C.paper.withValues(alpha: 0.8),
+                child: const Icon(
+                  Icons.visibility_off_rounded,
+                  size: 36,
+                  color: C.beige,
                 ),
               ),
               const SizedBox(height: S.x5),
               Text(
-                'SCREEN PROTECTED',
+                'Display Concealed',
                 textAlign: TextAlign.center,
-                style: T.state.copyWith(
-                  color: C.paper,
-                  fontSize: 34,
-                  letterSpacing: -0.6,
-                ),
+                style: T.hero.copyWith(color: C.beige, fontSize: 32),
               ),
               const SizedBox(height: S.x3),
-              Text(
-                _gazeDetector.reason.message.toUpperCase(),
-                textAlign: TextAlign.center,
-                style: T.label.copyWith(color: C.signal, fontSize: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: S.x4,
+                  vertical: S.x2,
+                ),
+                decoration: BoxDecoration(
+                  color: C.roast,
+                  borderRadius: BorderRadius.circular(R.pill),
+                  border: Border.all(color: C.caramel),
+                ),
+                child: Text(
+                  _gazeDetector.reason.message.toUpperCase(),
+                  textAlign: TextAlign.center,
+                  style: T.caption.copyWith(color: C.beige, letterSpacing: 1.0),
+                ),
               ),
-              const SizedBox(height: S.x7),
+              const SizedBox(height: S.x6),
               SizedBox(
-                width: 220,
-                child: PanelButton(
-                  label: 'Stop protection',
+                width: 210,
+                child: ActionPillButton(
+                  label: 'Disable Shield',
                   onPressed: _stopProtection,
                 ),
               ),

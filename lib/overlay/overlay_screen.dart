@@ -4,6 +4,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 
+import '../theme/tokens.dart';
+
 class OverlayScreen extends StatefulWidget {
   const OverlayScreen({super.key});
 
@@ -12,7 +14,7 @@ class OverlayScreen extends StatefulWidget {
 }
 
 class _OverlayScreenState extends State<OverlayScreen> {
-  bool _isLooking = true; // start transparent until first update
+  bool _isLooking = true;
   StreamSubscription? _subscription;
 
   @override
@@ -40,12 +42,11 @@ class _OverlayScreenState extends State<OverlayScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // When looking: fully transparent, click-through. When away: fullscreen blur/dark over other apps.
     return Material(
       color: Colors.transparent,
       child: SizedBox.expand(
         child: AnimatedOpacity(
-          duration: const Duration(milliseconds: 250),
+          duration: const Duration(milliseconds: 240),
           opacity: _isLooking ? 0.0 : 1.0,
           child:
               _isLooking
@@ -53,33 +54,42 @@ class _OverlayScreenState extends State<OverlayScreen> {
                   : Container(
                     width: double.infinity,
                     height: double.infinity,
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.92),
-                    ),
+                    color: C.espressoDeep.withValues(alpha: 0.94),
                     child: Center(
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(
-                            Icons.visibility_off,
-                            size: 72,
-                            color: Colors.white.withValues(alpha: 0.9),
+                          Container(
+                            width: 84,
+                            height: 84,
+                            decoration: BoxDecoration(
+                              color: C.espresso,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: C.sand.withValues(alpha: 0.35),
+                                width: 2,
+                              ),
+                            ),
+                            child: const Icon(
+                              Icons.visibility_off_rounded,
+                              size: 40,
+                              color: C.beige,
+                            ),
                           ),
                           const SizedBox(height: 24),
                           Text(
-                            'Screen protected',
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.95),
+                            'Display Concealed',
+                            style: T.hero.copyWith(
+                              color: C.beige,
                               fontSize: 26,
-                              fontWeight: FontWeight.w600,
                             ),
                           ),
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 10),
                           Text(
-                            'Look at the screen to continue',
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.7),
-                              fontSize: 16,
+                            'Look back at the screen to continue',
+                            style: T.body.copyWith(
+                              color: C.sandDeep,
+                              fontSize: 15,
                             ),
                           ),
                         ],
