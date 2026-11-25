@@ -443,10 +443,6 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
     final CameraController? controller = _cameraGazeService.controller;
     final Uint8List? nativeFrame = _cameraGazeService.lastFrameBytes;
     final bool wantPreview = SettingsService.instance.showCameraPreview;
-    final bool hasPreview =
-        wantPreview &&
-        ((controller != null && controller.value.isInitialized) ||
-            nativeFrame != null);
     final HeadPose? pose = _cameraGazeService.lastPose;
     final int failures = _cameraGazeService.shredFailures;
     final CameraEffects effects = _cameraGazeService.effects;
@@ -457,6 +453,44 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
     final Color bannerBg = isVisible ? C.espresso : C.caramel;
     final Color bannerBorder = isVisible ? C.roast : C.caramel;
     final double progress = isVisible ? 1.0 : _gazeDetector.confidence;
+    final IconData statusIcon =
+        isVisible ? Icons.visibility_rounded : Icons.visibility_off_rounded;
+    final String lockHint =
+        isVisible
+            ? 'Attentive lock active'
+            : 'Frames to unlock: ${_gazeDetector.framesToReveal}';
+
+    Widget? previewWidget;
+    if (wantPreview) {
+      if (controller != null && controller.value.isInitialized) {
+        final double ratio = controller.value.aspectRatio;
+        previewWidget = AspectRatio(
+          aspectRatio: ratio == 0 ? 4 / 3 : ratio,
+          child: CameraPreview(controller),
+        );
+      } else if (nativeFrame != null) {
+        previewWidget = Image.memory(
+          nativeFrame,
+          gaplessPlayback: true,
+          filterQuality: FilterQuality.low,
+        );
+      }
+    }
+
+    final bool inMemory = _cameraGazeService.isInMemoryCapture;
+    final String captureLabel =
+        inMemory ? 'RAM ($_captureModeLabel)' : 'Disk ($_captureModeLabel)';
+    final String yawLabel =
+        pose == null ? '--' : '${pose.yaw.toStringAsFixed(1)}°';
+    final String rollLabel =
+        pose == null ? '--' : '${pose.roll.toStringAsFixed(1)}°';
+    final String tuneLabel =
+        _cameraGazeService.isPitchCalibrated ? 'Ready' : 'Learn';
+    final int shredded = _cameraGazeService.framesShredded;
+    final String wipedLabel =
+        failures == 0 ? '$shredded' : '$shredded ($failures failed)';
+    const EdgeInsets metricPadding =
+        EdgeInsets.symmetric(horizontal: S.x4, vertical: S.x3);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -477,13 +511,7 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
                       color: C.beige.withValues(alpha: 0.14),
                       borderRadius: BorderRadius.circular(R.md),
                     ),
-                    child: Icon(
-                      isVisible
-                          ? Icons.visibility_rounded
-                          : Icons.visibility_off_rounded,
-                      color: C.beige,
-                      size: 20,
-                    ),
+                    child: Icon(statusIcon, color: C.beige, size: 20),
                   ),
                   const SizedBox(width: S.x3),
                   Expanded(
@@ -511,9 +539,7 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    isVisible
-                        ? 'Attentive lock active'
-                        : 'Frames to unlock: ${_gazeDetector.framesToReveal}',
+                    lockHint,
                     style: T.caption.copyWith(
                       color: C.sandDeep,
                       fontWeight: FontWeight.w500,
@@ -528,7 +554,7 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
             ],
           ),
         ),
-        if (hasPreview) ...[
+        if (previewWidget != null) ...[
           const SizedBox(height: S.x3),
           SurfaceCard(
             padding: const EdgeInsets.all(S.x2),
@@ -539,20 +565,7 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
                     borderRadius: BorderRadius.circular(R.md),
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxHeight: 145),
-                      child:
-                          controller != null && controller.value.isInitialized
-                              ? AspectRatio(
-                                aspectRatio:
-                                    controller.value.aspectRatio == 0
-                                        ? 4 / 3
-                                        : controller.value.aspectRatio,
-                                child: CameraPreview(controller),
-                              )
-                              : Image.memory(
-                                nativeFrame!,
-                                gaplessPlayback: true,
-                                filterQuality: FilterQuality.low,
-                              ),
+                      child: previewWidget,
                     ),
                   ),
                 ),
@@ -585,7 +598,7 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
               child: BentoTile(
                 icon: Icons.swap_horiz_rounded,
                 label: 'Yaw',
-                value: pose == null ? '--' : '${pose.yaw.toStringAsFixed(1)}°',
+                value: yawLabel,
               ),
             ),
             const SizedBox(width: S.x2),
@@ -593,7 +606,7 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
               child: BentoTile(
                 icon: Icons.rotate_right_rounded,
                 label: 'Roll',
-                value: pose == null ? '--' : '${pose.roll.toStringAsFixed(1)}°',
+                value: rollLabel,
               ),
             ),
             const SizedBox(width: S.x2),
@@ -601,7 +614,7 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
               child: BentoTile(
                 icon: Icons.center_focus_strong_rounded,
                 label: 'Tune',
-                value: _cameraGazeService.isPitchCalibrated ? 'Ready' : 'Learn',
+                value: tuneLabel,
               ),
             ),
           ],
@@ -613,18 +626,9 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
               child: BentoTile(
                 icon: Icons.memory_rounded,
                 label: 'Capture',
-                value:
-                    _cameraGazeService.isInMemoryCapture
-                        ? 'RAM ($_captureModeLabel)'
-                        : 'Disk ($_captureModeLabel)',
-                valueColor:
-                    _cameraGazeService.isInMemoryCapture
-                        ? C.olive
-                        : C.espresso,
-                toneColor:
-                    _cameraGazeService.isInMemoryCapture
-                        ? C.oliveSoft
-                        : C.sandDeep,
+                value: captureLabel,
+                valueColor: inMemory ? C.olive : C.espresso,
+                toneColor: inMemory ? C.oliveSoft : C.sandDeep,
               ),
             ),
             const SizedBox(width: S.x2 + 2),
@@ -641,7 +645,7 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
         ),
         const SizedBox(height: S.x2 + 2),
         SurfaceCard(
-          padding: const EdgeInsets.symmetric(horizontal: S.x4, vertical: S.x3),
+          padding: metricPadding,
           child: Row(
             children: [
               Expanded(
@@ -669,9 +673,7 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
                     Text('Temp Wiped', style: T.caption),
                     const SizedBox(height: 2),
                     Text(
-                      failures == 0
-                          ? '${_cameraGazeService.framesShredded}'
-                          : '${_cameraGazeService.framesShredded} ($failures failed)',
+                      wipedLabel,
                       style: T.value.copyWith(
                         fontSize: 12.5,
                         color: failures == 0 ? C.espresso : C.caramel,
