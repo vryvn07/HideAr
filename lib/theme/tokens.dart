@@ -252,13 +252,26 @@ class ActionPillButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Color bg =
-        danger
-            ? C.caramel
-            : (primary ? C.espresso : (tonal ? C.sandDeep : C.beige));
+    final Color bg;
+    if (danger) {
+      bg = C.caramel;
+    } else if (primary) {
+      bg = C.espresso;
+    } else if (tonal) {
+      bg = C.sandDeep;
+    } else {
+      bg = C.beige;
+    }
     final Color fg = (primary || danger) ? C.beige : C.espresso;
-    final Color borderColor =
-        (primary || danger) ? Colors.transparent : C.border;
+    final Color borderColor;
+    final Color hover;
+    if (primary || danger) {
+      borderColor = Colors.transparent;
+      hover = C.roast;
+    } else {
+      borderColor = C.border;
+      hover = C.sandDeep.withValues(alpha: 0.8);
+    }
 
     return SizedBox(
       width: double.infinity,
@@ -271,10 +284,7 @@ class ActionPillButton extends StatelessWidget {
         child: InkWell(
           onTap: onPressed,
           borderRadius: BorderRadius.circular(R.md),
-          hoverColor:
-              (primary || danger)
-                  ? C.roast
-                  : C.sandDeep.withValues(alpha: 0.8),
+          hoverColor: hover,
           child: Padding(
             padding: const EdgeInsets.symmetric(
               horizontal: S.x4,

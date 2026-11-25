@@ -281,18 +281,22 @@ class _ProtectionActiveScreenState extends State<ProtectionActiveScreen>
     final bool isVisible = _gazeDetector.isScreenVisible;
     final bool showBlackout = _blackoutWanted;
 
-    final String headerTitle =
-        _isStarting
-            ? 'Starting Shield'
-            : (_error != null ? 'Sensor Error' : 'Shield Active');
-    final String badgeText =
-        _isStarting
-            ? 'INIT'
-            : (_error != null ? 'FAULT' : (isVisible ? 'CLEAR' : 'VEILED'));
-    final Color dotColor =
-        _isStarting
-            ? C.cocoa
-            : (_error != null ? C.caramel : (isVisible ? C.olive : C.caramel));
+    final String headerTitle;
+    final String badgeText;
+    final Color dotColor;
+    if (_isStarting) {
+      headerTitle = 'Starting Shield';
+      badgeText = 'INIT';
+      dotColor = C.cocoa;
+    } else if (_error != null) {
+      headerTitle = 'Sensor Error';
+      badgeText = 'FAULT';
+      dotColor = C.caramel;
+    } else {
+      headerTitle = 'Shield Active';
+      badgeText = isVisible ? 'CLEAR' : 'VEILED';
+      dotColor = isVisible ? C.olive : C.caramel;
+    }
 
     return Stack(
       fit: StackFit.expand,
